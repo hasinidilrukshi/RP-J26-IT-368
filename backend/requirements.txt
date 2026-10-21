@@ -1,0 +1,11 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pymongo>=4.6
+ultralytics>=8.4  # model was trained with 8.4.x
+pillow>=10.0
+openpyxl>=3.1
+python-dotenv>=1.0
+# optional - only for running tests without a MongoDB server
+mongomock>=4.1
+pytest>=8.0
