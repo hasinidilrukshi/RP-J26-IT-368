@@ -1,0 +1,255 @@
+import os
+import time
+import json
+import numpy as np
+import pandas as pd
+from pymoo.core.problem import ElementwiseProblem
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.optimize import minimize
+from pymoo.termination import get_termination
+from pymoo.operators.sampling.rnd import PermutationRandomSampling
+from pymoo.operators.crossover.ox import OrderCrossover
+from pymoo.operators.mutation.inversion import InversionMutation
+
+# We need to make sure the CSV is loaded correctly relative to the backend directory
+csv_path = os.path.join(os.path.dirname(__file__), "sri_lanka_destinations_100.csv")
+
+# Create the CSV if it doesn't exist
+csv_data = """place_id,place_name,climate,vibe,avg_cost_usd,visit_hours,lat,lon
+1,Sigiriya Rock Fortress,Tropical,Historical,30.00,3.5,7.9570,80.7603
+2,Pidurangala Rock,Tropical,Adventure,3.00,2.5,7.9654,80.7648
+3,Temple of the Sacred Tooth,Moderate,Culture,10.00,1.5,7.2936,80.6415
+4,Royal Botanical Gardens Kandy,Moderate,Nature,10.00,3.0,7.2714,80.5950
+5,Dambulla Cave Temple,Tropical,Historical,10.00,2.0,7.8566,80.6485
+6,Yala National Park,Sunny,Wildlife,25.00,5.0,6.3756,81.5156
+7,Udawalawe National Park,Sunny,Wildlife,20.00,4.0,6.4384,80.8887
+8,Minneriya National Park,Tropical,Wildlife,20.00,3.5,8.0333,80.8333
+9,Ella Rock,Cool,Adventure,0.00,4.0,6.8582,81.0543
+10,Little Adam's Peak,Cool,Nature,0.00,2.0,6.8647,81.0634
+11,Nine Arches Bridge,Cool,Culture,0.00,1.0,6.8767,81.0607
+12,Horton Plains National Park,Cool,Nature,15.00,4.0,6.8028,80.8066
+13,World's End Viewpoint,Cool,Adventure,0.00,1.5,6.7725,80.7937
+14,Adam's Peak (Sri Pada),Cool,Adventure,0.00,7.0,6.8096,80.4994
+15,Galle Fort,Sunny,Historical,0.00,3.0,6.0258,80.2176
+16,Unawatuna Beach,Sunny,Beach,0.00,4.0,6.0116,80.2483
+17,Mirissa Beach & Whale Watching,Sunny,Beach,50.00,5.0,5.9483,80.4536
+18,Coconut Tree Hill,Sunny,Nature,0.00,1.0,5.9427,80.4635
+19,Polonnaruwa Ancient City,Tropical,Historical,25.00,4.0,7.9403,81.0028
+20,Anuradhapura Sacred City,Tropical,Historical,25.00,4.5,8.3497,80.3899
+21,Ruwanwelisaya Stupa,Tropical,Culture,0.00,1.0,8.3500,80.3966
+22,Pinnawala Elephant Orphanage,Tropical,Wildlife,15.00,2.5,7.3013,80.3871
+23,Kandy Lake,Moderate,Nature,0.00,1.0,7.2917,80.6406
+24,Gregory Lake Nuwara Eliya,Cool,Nature,1.50,2.0,6.9587,80.7766
+25,Nuwara Eliya Post Office,Cool,Historical,0.00,0.5,6.9733,80.7677
+26,Hakgala Botanical Garden,Cool,Nature,10.00,2.0,6.9272,80.8208
+27,Arugam Bay Surf Beach,Sunny,Beach,0.00,5.0,6.8436,81.8267
+28,Pasikudah Beach,Sunny,Beach,0.00,4.0,7.9250,81.5622
+29,Nilaveli Beach,Sunny,Beach,0.00,4.0,8.6826,81.1895
+30,Pigeon Island National Park,Sunny,Wildlife,20.00,3.0,8.7214,81.1983
+31,Trincomalee Fort Frederick,Sunny,Historical,0.00,1.5,8.5831,81.2335
+32,Koneswaram Temple,Sunny,Culture,0.00,1.0,8.5855,81.2332
+33,Wilpattu National Park,Sunny,Wildlife,25.00,5.0,8.4411,79.9928
+34,Bundala National Park,Sunny,Wildlife,15.00,3.5,6.1750,81.2291
+35,Sinharaja Forest Reserve,Tropical,Nature,10.00,4.0,6.4022,80.4431
+36,Kitulgala White Water Rafting,Tropical,Adventure,25.00,3.0,6.9947,80.4147
+37,Diyaluma Falls,Cool,Adventure,0.00,2.0,6.7322,81.0298
+38,Bambarakanda Falls,Cool,Nature,0.00,1.5,6.7725,80.8286
+39,Ravana Falls,Cool,Nature,0.00,0.5,6.8407,81.0549
+40,St. Clair's Falls,Cool,Nature,0.00,1.0,6.9360,80.6433
+41,Devon Falls,Cool,Nature,0.00,1.0,6.9378,80.6272
+42,Ramboda Falls,Cool,Nature,0.00,1.5,7.0544,80.6997
+43,Ambuluwawa Tower,Moderate,Adventure,3.00,2.0,7.1278,80.5653
+44,Bahirawakanda Vihara Buddha,Moderate,Culture,2.00,1.0,7.2882,80.6300
+45,Koggala Lake Safari,Sunny,Nature,12.00,2.0,5.9926,80.3298
+46,Hikkaduwa Coral Reef,Sunny,Beach,15.00,2.5,6.1388,80.0984
+47,Bentota Beach,Sunny,Beach,0.00,3.0,6.4253,79.9972
+48,Madu River Safari,Tropical,Nature,15.00,2.5,6.3056,80.0464
+49,Kalpitiya Dolphin Watching,Sunny,Wildlife,40.00,3.5,8.2327,79.7617
+50,Jaffna Fort,Sunny,Historical,0.00,2.0,9.6615,80.0074
+51,Nallur Kandaswamy Temple,Sunny,Culture,0.00,1.0,9.6744,80.0306
+52,Casuarina Beach,Sunny,Beach,0.00,3.0,9.7547,79.9142
+53,Delft Island (Neduntheevu),Sunny,Adventure,10.00,4.0,9.5167,79.6833
+54,Keerimalai Sacred Springs,Sunny,Culture,0.00,1.0,9.8167,80.0167
+55,Muthurajawela Marsh,Tropical,Nature,15.00,2.5,7.0673,79.8821
+56,Gangaramaya Temple,Tropical,Culture,1.50,1.0,6.9157,79.8569
+57,Independence Square,Tropical,Historical,0.00,1.0,6.9042,79.8687
+58,Galle Face Green,Tropical,Urban,0.00,1.5,6.9248,79.8450
+59,Viharamahadevi Park,Tropical,Urban,0.00,1.0,6.9113,79.8610
+60,Lotus Tower (Nelum Kuluna),Tropical,Urban,20.00,1.5,6.9269,79.8584
+61,Red Mosque (Jami Ul-Alfar),Tropical,Culture,0.00,0.5,6.9388,79.8496
+62,Mount Lavinia Beach,Tropical,Beach,0.00,2.0,6.8322,79.8631
+63,Dehiwala Zoological Garden,Tropical,Wildlife,10.00,3.0,6.8522,79.8736
+64,Kelaniya Raja Maha Vihara,Tropical,Culture,0.00,1.5,6.9490,79.9178
+65,Yapahuwa Rock Fortress,Tropical,Historical,5.00,2.5,7.8183,80.2974
+66,Aukana Buddha Statue,Tropical,Historical,5.00,1.0,8.0125,80.5097
+67,Mihintale Peak,Tropical,Culture,3.00,2.5,8.3510,80.5186
+68,Ritigala Nature Reserve,Tropical,Nature,5.00,2.0,8.1130,80.6558
+69,Kaudulla National Park,Tropical,Wildlife,20.00,3.5,8.1256,80.9300
+70,Somawathiya National Park,Tropical,Wildlife,15.00,3.5,8.1367,81.1614
+71,Gal Oya National Park,Sunny,Wildlife,20.00,4.0,7.2144,81.4283
+72,Kumana National Park,Sunny,Wildlife,15.00,4.0,6.5414,81.6506
+73,Lunugamvehera National Park,Sunny,Wildlife,15.00,3.0,6.4172,81.2058
+74,Wasgamuwa National Park,Tropical,Wildlife,20.00,4.0,7.7125,80.9419
+75,Maduru Oya National Park,Tropical,Wildlife,15.00,3.5,7.6331,81.1578
+76,Sembuwatta Lake,Moderate,Nature,2.00,2.0,7.4386,80.6975
+77,Knuckles Mountain Range,Cool,Adventure,5.00,6.0,7.3828,80.7719
+78,Meemure Village,Cool,Adventure,0.00,5.0,7.4333,80.8333
+79,Lipton's Seat,Cool,Nature,1.00,1.5,6.7725,81.0186
+80,Adisham Bungalow,Cool,Historical,2.00,1.0,6.7644,80.9417
+81,Dowa Rock Temple,Cool,Culture,0.00,1.0,6.8406,81.0422
+82,Muthiyangana Temple,Tropical,Culture,0.00,0.5,6.9825,81.0578
+83,Kataragama Sacred City,Sunny,Culture,0.00,2.0,6.4150,81.3325
+84,Kirinda Temple,Sunny,Culture,0.00,1.0,6.2133,81.3333
+85,Mulkirigala Rock Temple,Sunny,Historical,3.00,1.5,6.0967,80.7417
+86,Hummanaya Blowhole,Sunny,Nature,1.50,1.0,5.9731,80.7161
+87,Tangalle Beach,Sunny,Beach,0.00,3.0,6.0236,80.7967
+88,Hiriketiya Beach,Sunny,Beach,0.00,4.0,5.9664,80.7028
+89,Dikwella Beach,Sunny,Beach,0.00,3.0,5.9689,80.6869
+90,Weligama Bay Surfing,Sunny,Beach,0.00,4.0,5.9736,80.4286
+91,Midigama Beach,Sunny,Beach,0.00,3.0,5.9675,80.3847
+92,Jungle Beach Unawatuna,Sunny,Beach,0.00,2.5,6.0189,80.2372
+93,Dalawella Beach Swing,Sunny,Adventure,3.00,1.5,6.0022,80.2644
+94,Kosgoda Turtle Hatchery,Sunny,Wildlife,5.00,1.0,6.3131,80.0308
+95,Brief Garden by Bevis Bawa,Tropical,Nature,6.00,1.5,6.4383,80.0150
+96,Lunuganga Estate,Tropical,Culture,10.00,2.0,6.4189,80.0242
+97,Seema Malaka,Tropical,Culture,1.50,1.0,6.9158,79.8569
+98,Bellanwila Rajamaha Viharaya,Tropical,Culture,0.00,1.0,6.8436,79.8967
+99,Kande Viharaya Temple,Sunny,Culture,0.00,1.0,6.4525,80.0031
+100,Richmond Castle,Tropical,Historical,3.00,1.5,6.5828,80.0050
+"""
+
+if not os.path.exists(csv_path):
+    with open(csv_path, "w") as file:
+        file.write(csv_data)
+
+# Load the DataFrame
+df_destinations = pd.read_csv(csv_path)
+
+# Haversine Distance Formula (km)
+def calculate_distance(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    dlat = np.radians(lat2 - lat1)
+    dlon = np.radians(lon2 - lon1)
+    a = (np.sin(dlat / 2.0)**2 +
+         np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.sin(dlon / 2.0)**2)
+    return float(R * 2.0 * np.arctan2(np.sqrt(a), np.sqrt(1.0 - a)))
+
+# Define the NSGA-II Multi-Objective Optimization Problem
+class TourRoutingProblem(ElementwiseProblem):
+    def __init__(self, df, inputs, total_stops):
+        self.df = df
+        self.inputs = inputs
+        self.total_stops = total_stops
+        super().__init__(n_var=len(df), n_obj=3, n_ieq_constr=1)
+
+    def _evaluate(self, x, out, *args, **kwargs):
+        selected_indices = x[:self.total_stops]
+        route_df = self.df.iloc[selected_indices]
+
+        entry_fees = float(route_df["avg_cost_usd"].sum()) * self.inputs["team_members"]
+        coords = route_df[["lat", "lon"]].values
+        total_dist_km = sum(
+            calculate_distance(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1])
+            for i in range(len(coords) - 1)
+        )
+        transport_cost = total_dist_km * 0.45
+        total_cost = entry_fees + transport_cost
+
+        travel_hours = total_dist_km / 35.0
+        total_trip_hours = travel_hours + float(route_df["visit_hours"].sum())
+
+        climate_match = int((route_df["climate"].str.lower() == self.inputs["preferred_climate"].lower()).sum())
+        vibe_match = int((route_df["vibe"].str.lower() == self.inputs["preferred_vibe"].lower()).sum())
+        preference_score = float((climate_match * 10.0) + (vibe_match * 15.0))
+
+        # Penalize if must-visit cities are NOT in the generated route
+        must_visit_penalty = 0.0
+        if "must_visit" in self.inputs and self.inputs["must_visit"]:
+            selected_places_text = " ".join(route_df["place_name"].str.lower().values)
+            for city in self.inputs["must_visit"]:
+                if city.lower() not in selected_places_text:
+                    must_visit_penalty += 1000.0 # Huge penalty if a requested city is missed
+
+        budget_violation = total_cost - self.inputs["budget_usd"]
+
+        out["F"] = [total_cost, total_trip_hours, -(preference_score - must_visit_penalty)]
+        out["G"] = [budget_violation]
+
+# Main Optimization Function to be called from API
+def generate_travel_plan(inputs):
+    total_stops = inputs["days"] * inputs["places_per_day"]
+    # Ensure total_stops doesn't exceed available places
+    total_stops = min(total_stops, len(df_destinations))
+
+    problem = TourRoutingProblem(df_destinations, inputs, total_stops)
+    algorithm = NSGA2(
+        pop_size=60,
+        sampling=PermutationRandomSampling(),
+        crossover=OrderCrossover(),
+        mutation=InversionMutation(),
+        eliminate_duplicates=True
+    )
+
+    start_time = time.time()
+    res = minimize(problem, algorithm, get_termination("n_gen", 40), seed=42, verbose=False)
+    execution_time = round(time.time() - start_time, 3)
+
+    costs = res.F[:, 0]
+    times = res.F[:, 1]
+    vibes = -res.F[:, 2]
+
+    route_keys = {
+        "cheapest_route": int(np.argmin(costs)),
+        "shortest_route": int(np.argmin(times)),
+        "longest_route": int(np.argmax(times)),
+        "best_preference_route": int(np.argmax(vibes)),
+        "recommended_route": int(len(costs) // 2)
+    }
+
+    output_data = {
+        "status": "success",
+        "benchmark": {
+            "execution_time_seconds": execution_time,
+            "solutions_evaluated": len(costs),
+            "meets_latency_sla": execution_time < 10.0
+        },
+        "routes": {}
+    }
+
+    for label, sol_idx in route_keys.items():
+        chosen_indices = res.X[sol_idx][:total_stops]
+        stops = []
+        for step, idx in enumerate(chosen_indices, start=1):
+            row = df_destinations.iloc[idx]
+
+            # Create a user-friendly visit duration string
+            visit_hrs = float(row["visit_hours"])
+            if visit_hrs <= 1.5:
+                time_suggestion = "Quick stop (~1 hour)"
+            elif visit_hrs <= 3.0:
+                time_suggestion = "Half-day activity (~3 hours)"
+            else:
+                time_suggestion = "Full-day experience (4+ hours)"
+
+            stops.append({
+                "day": ((step - 1) // inputs["places_per_day"]) + 1,
+                "stop_number": ((step - 1) % inputs["places_per_day"]) + 1,
+                "place_name": str(row["place_name"]),
+                "climate": str(row["climate"]),
+                "vibe": str(row["vibe"]),
+                "cost_usd": float(row["avg_cost_usd"]),
+                "visit_duration": time_suggestion, # Add the new friendly duration
+                "latitude": float(row["lat"]),
+                "longitude": float(row["lon"])
+            })
+
+        output_data["routes"][label] = {
+            "summary": {
+                "total_cost_usd": round(float(costs[sol_idx]), 2),
+                "total_hours": round(float(times[sol_idx]), 1),
+                "preference_score": round(float(vibes[sol_idx]), 1)
+            },
+            "stops": stops
+        }
+
+    return output_data
