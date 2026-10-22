@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -66,20 +68,47 @@ class _ProfilePageState extends State<ProfilePage> with SingleTickerProviderStat
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please fill all fields!'), backgroundColor: Colors.red));
       return;
     }
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('System Alert Published to all users!'), 
-        backgroundColor: Colors.green,
-        behavior: SnackBarBehavior.floating,
-      )
-    );
 
-    // Clear form after publishing
-    _hazardTitleController.clear();
-    _hazardLocationController.clear();
-    _hazardSeverityController.clear();
-    _hazardDescriptionController.clear();
+    try {
+      final response = await http.post(
+        Uri.parse('http://10.0.2.2:8000/api/hazards'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'title': _hazardTitleController.text,
+          'location': _hazardLocationController.text,
+          'severity': _hazardSeverityController.text.isNotEmpty ? _hazardSeverityController.text : 'Medium',
+          'description': _hazardDescriptionController.text,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Hazard Saved to Database Successfully!'), 
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+          )
+        );
+
+        // Clear form after publishing
+        _hazardTitleController.clear();
+        _hazardLocationController.clear();
+        _hazardSeverityController.clear();
+        _hazardDescriptionController.clear();
+      } else {
+        throw Exception('Server returned ${response.statusCode}');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error saving to DB: $e'), 
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        )
+      );
+    }
   }
 
   @override

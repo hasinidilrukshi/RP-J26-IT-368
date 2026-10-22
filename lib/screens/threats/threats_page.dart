@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-// Removed: import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class ThreatsPage extends StatefulWidget {
   const ThreatsPage({super.key});
@@ -10,17 +11,35 @@ class ThreatsPage extends StatefulWidget {
 }
 
 class _ThreatsPageState extends State<ThreatsPage> {
-  // Removed local notifications plugin
+  List<dynamic> _hazards = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    // _initializeNotifications();
+    _fetchHazards();
   }
 
-  // This method is now disabled since we removed the package
-  static Future<void> showHazardNotification(String title, String location, dynamic plugin) async {
-    // Disabled
+  Future<void> _fetchHazards() async {
+    try {
+      final response = await http.get(Uri.parse('http://10.0.2.2:8000/api/hazards'));
+      if (response.statusCode == 200) {
+        if (mounted) {
+          setState(() {
+            _hazards = json.decode(response.body);
+            _isLoading = false;
+          });
+        }
+      } else {
+        throw Exception('Failed to load hazards');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -66,28 +85,19 @@ class _ThreatsPageState extends State<ThreatsPage> {
             ),
             const SizedBox(height: 15),
             
-            // Mock data - eventually this will come from the backend/database
-            _buildHazardCard(
-              title: 'Landslide Warning',
-              location: 'Ella Rock Trail',
-              date: 'Oct 22, 2026',
-              description: 'Heavy rainfall over the past 48 hours has weakened the soil on the main trail to Ella Rock. Please avoid the area until further notice by local authorities.',
-              severity: 'High',
-            ),
-            _buildHazardCard(
-              title: 'Elephant Crossing',
-              location: 'Habarana Main Road',
-              date: 'Oct 22, 2026',
-              description: 'Herd of wild elephants frequently crossing the road near the national park entrance. Drive slowly and do not honk or flash headlights.',
-              severity: 'Medium',
-            ),
-            _buildHazardCard(
-              title: 'Flash Flood Watch',
-              location: 'Kitulgala',
-              date: 'Oct 21, 2026',
-              description: 'Kelani river levels rising rapidly. White water rafting is temporarily suspended for safety.',
-              severity: 'High',
-            ),
+            // Fetch and Display Real Data from MongoDB
+            if (_isLoading)
+              const Center(child: CircularProgressIndicator())
+            else if (_hazards.isEmpty)
+              const Center(child: Text("No active hazards reported at this time.", style: TextStyle(color: Colors.grey)))
+            else
+              ..._hazards.map((h) => _buildHazardCard(
+                title: h['title'] ?? 'Unknown Hazard',
+                location: h['location'] ?? 'Unknown Location',
+                date: h['date'] ?? 'Recent',
+                description: h['description'] ?? '',
+                severity: h['severity'] ?? 'Medium',
+              )),
           ],
         ),
       ),

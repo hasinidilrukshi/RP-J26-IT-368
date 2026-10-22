@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import route_api # Import the new API route
+from app.api import route_api, hazard_api # Import the new API route
 
 app = FastAPI(title="Travel Buddy API")
 
@@ -17,5 +17,6 @@ app.add_middleware(
 def read_root():
     return {"message": "Welcome to Travel Buddy API"}
 
-# Include the route generator API
+# Include the APIs
 app.include_router(route_api.router, prefix="/api", tags=["Routes"])
+app.include_router(hazard_api.router, prefix="/api", tags=["Hazards"])

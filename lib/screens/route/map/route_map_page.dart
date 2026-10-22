@@ -2,16 +2,74 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart'; // Added url_launcher
 
-class RouteMapPage extends StatelessWidget {
+class RouteMapPage extends StatefulWidget {
   final Map<String, dynamic>? routeData;
 
   const RouteMapPage({super.key, this.routeData});
 
   @override
+  State<RouteMapPage> createState() => _RouteMapPageState();
+}
+
+class _RouteMapPageState extends State<RouteMapPage> {
+  final MapController _mapController = MapController();
+  double _currentZoom = 7.5;
+
+  void _zoomIn() {
+    setState(() {
+      _currentZoom = (_currentZoom + 1).clamp(1.0, 18.0);
+      _mapController.move(_mapController.camera.center, _currentZoom);
+    });
+  }
+
+  void _zoomOut() {
+    setState(() {
+      _currentZoom = (_currentZoom - 1).clamp(1.0, 18.0);
+      _mapController.move(_mapController.camera.center, _currentZoom);
+    });
+  }
+
+  // --- GOOGLE MAPS LAUNCHER METHOD ---
+  Future<void> _launchGoogleMapsNavigation(List<LatLng> routePoints) async {
+    if (routePoints.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No route points available to navigate.')));
+      return;
+    }
+
+    // Origin is the first point
+    final LatLng origin = routePoints.first;
+    // Destination is the last point
+    final LatLng destination = routePoints.last;
+
+    // Build the Google Maps intent URL
+    String googleMapsUrl = 'https://www.google.com/maps/dir/?api=1&origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}';
+
+    // If there are more than 2 points, add the intermediate stops as waypoints
+    if (routePoints.length > 2) {
+      googleMapsUrl += '&waypoints=';
+      for (int i = 1; i < routePoints.length - 1; i++) {
+        googleMapsUrl += '${routePoints[i].latitude},${routePoints[i].longitude}';
+        if (i < routePoints.length - 2) {
+          googleMapsUrl += '|'; // Separate waypoints with a pipe character
+        }
+      }
+    }
+
+    final Uri url = Uri.parse(googleMapsUrl);
+
+    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not launch Google Maps.')));
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Extract real data
-    final recommendedRoute = routeData?["routes"]?["recommended_route"];
+    // Extract real data using widget.routeData because this is now a StatefulWidget
+    final recommendedRoute = widget.routeData?["routes"]?["recommended_route"];
     final summary = recommendedRoute?["summary"];
     final List dynamicStops = recommendedRoute?["stops"] ?? [];
     final List<Map<String, dynamic>> stops = List<Map<String, dynamic>>.from(dynamicStops);
@@ -89,9 +147,15 @@ class RouteMapPage extends StatelessWidget {
             right: 0,
             height: MediaQuery.of(context).size.height * 0.55,
             child: FlutterMap(
+              mapController: _mapController,
               options: MapOptions(
                 initialCenter: centerPoint,
-                initialZoom: 7.5,
+                initialZoom: _currentZoom,
+                onPositionChanged: (position, hasGesture) {
+                  if (hasGesture) {
+                    _currentZoom = position.zoom ?? _currentZoom;
+                  }
+                },
               ),
               children: [
                 TileLayer(
@@ -108,6 +172,29 @@ class RouteMapPage extends StatelessWidget {
                   ],
                 ),
                 MarkerLayer(markers: markers),
+              ],
+            ),
+          ),
+
+          // Zoom In / Zoom Out Controls
+          Positioned(
+            bottom: MediaQuery.of(context).size.height * 0.45 + 20, // Sit right above the white sheet
+            right: 20,
+            child: Column(
+              children: [
+                FloatingActionButton.small(
+                  heroTag: "zoom_in",
+                  backgroundColor: Colors.white,
+                  onPressed: _zoomIn,
+                  child: const Icon(Icons.add, color: Color(0xFF5D4037)),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton.small(
+                  heroTag: "zoom_out",
+                  backgroundColor: Colors.white,
+                  onPressed: _zoomOut,
+                  child: const Icon(Icons.remove, color: Color(0xFF5D4037)),
+                ),
               ],
             ),
           ),
@@ -184,7 +271,7 @@ class RouteMapPage extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 25),
                     child: Text(
                       summary != null 
-                          ? '${stops.length} stops • ${routeData?["benchmark"]?["solutions_evaluated"] ?? 7} days • ~${summary["total_cost_usd"]} USD Total'
+                          ? '${stops.length} stops • ${widget.routeData?["benchmark"]?["solutions_evaluated"] ?? 7} days • ~${summary["total_cost_usd"]} USD Total'
                           : '5 stops • 7 days • 342 km total',
                       style: GoogleFonts.exo(fontSize: 14, color: Colors.grey.shade600, fontWeight: FontWeight.w600),
                     ),
@@ -215,21 +302,24 @@ class RouteMapPage extends StatelessWidget {
                   // Start Navigation Button
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 25),
-                    child: Container(
-                      height: 55,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE65100),
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [BoxShadow(color: const Color(0xFFE65100).withValues(alpha: 0.3), blurRadius: 15, offset: const Offset(0, 8))],
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text('Start Navigation', style: GoogleFonts.exo(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                          const SizedBox(width: 8),
-                          const Icon(Icons.arrow_forward, color: Colors.white, size: 20),
-                        ],
+                    child: GestureDetector(
+                      onTap: () => _launchGoogleMapsNavigation(routePoints), // Triggers Google Maps!
+                      child: Container(
+                        height: 55,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE65100),
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [BoxShadow(color: const Color(0xFFE65100).withValues(alpha: 0.3), blurRadius: 15, offset: const Offset(0, 8))],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text('Start Navigation', style: GoogleFonts.exo(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                            const SizedBox(width: 8),
+                            const Icon(Icons.arrow_forward, color: Colors.white, size: 20),
+                          ],
+                        ),
                       ),
                     ),
                   ),
