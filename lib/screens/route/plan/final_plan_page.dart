@@ -285,7 +285,7 @@ class FinalPlanPage extends StatelessWidget {
               onTap: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const RouteMapPage()),
+                  MaterialPageRoute(builder: (context) => RouteMapPage(routeData: routeData)), // Passing real data!
                 );
               },
               child: Container(

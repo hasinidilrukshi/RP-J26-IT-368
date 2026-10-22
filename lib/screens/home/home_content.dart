@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../widgets/destination_card.dart';
+import '../threats/threats_page.dart';
 
 class HomeContent extends StatelessWidget {
   const HomeContent({super.key});
@@ -131,11 +132,15 @@ class HomeContent extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _buildServiceIcon(Icons.explore_rounded, 'Plan'),
-                _buildServiceIcon(Icons.verified_user_rounded, 'Safety'),
-                _buildServiceIcon(Icons.radar_rounded, 'Threats'),
-                _buildServiceIcon(Icons.emergency_share_rounded, 'SOS'),
-                _buildServiceIcon(Icons.wifi_off_rounded, 'Offline'),
+                _buildServiceIcon(Icons.explore_rounded, 'Plan', null),
+                _buildServiceIcon(Icons.verified_user_rounded, 'Safety', null),
+                _buildServiceIcon(
+                  Icons.radar_rounded, 
+                  'Threats', 
+                  () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ThreatsPage()))
+                ),
+                _buildServiceIcon(Icons.emergency_share_rounded, 'SOS', null),
+                _buildServiceIcon(Icons.wifi_off_rounded, 'Offline', null),
               ],
             ),
           ),
@@ -264,36 +269,39 @@ class HomeContent extends StatelessWidget {
     );
   }
 
-  Widget _buildServiceIcon(IconData icon, String label) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12), // Reduced padding to fit 5 items
-          decoration: BoxDecoration(
-            color: const Color(0xFFE65100),
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFFE65100).withValues(alpha: 0.2),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
+  Widget _buildServiceIcon(IconData icon, String label, VoidCallback? onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12), // Reduced padding to fit 5 items
+            decoration: BoxDecoration(
+              color: const Color(0xFFE65100),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFE65100).withValues(alpha: 0.2),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Icon(icon, color: Colors.white, size: 22), // Slightly smaller icon
           ),
-          child: Icon(icon, color: Colors.white, size: 22), // Slightly smaller icon
-        ),
-        const SizedBox(height: 8),
-        Text(
-          label, 
-          textAlign: TextAlign.center,
-          style: GoogleFonts.exo(
-            fontSize: 10, 
-            fontWeight: FontWeight.bold, 
-            color: const Color(0xFF5D4037)
+          const SizedBox(height: 8),
+          Text(
+            label, 
+            textAlign: TextAlign.center,
+            style: GoogleFonts.exo(
+              fontSize: 10, 
+              fontWeight: FontWeight.bold, 
+              color: const Color(0xFF5D4037)
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

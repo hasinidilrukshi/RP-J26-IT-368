@@ -18,10 +18,11 @@ class RouteRequest(BaseModel):
     budget: float
     people: int
     days: int
+    route_preference: str
 
 @router.post("/generate-route")
 def generate_route(request: RouteRequest):
-    print(f"Received request for {request.people} people for {request.days} days")
+    print(f"Received request for {request.people} people for {request.days} days with preference {request.route_preference}")
 
     # Map Flutter inputs to the format expected by the NSGA-II engine
     primary_climate = request.climates[0] if request.climates else "Tropical"
@@ -33,7 +34,8 @@ def generate_route(request: RouteRequest):
         "team_members": request.people,
         "preferred_climate": primary_climate,
         "preferred_vibe": "Nature",
-        "must_visit": request.cities # Add must visit cities to inputs
+        "must_visit": request.cities,
+        "route_preference": request.route_preference # Pass to core
     }
 
     # 1. Run the real NSGA-II Optimization

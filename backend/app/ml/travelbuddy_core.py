@@ -206,6 +206,12 @@ def generate_travel_plan(inputs):
         "recommended_route": int(len(costs) // 2)
     }
 
+    # Determine the "Main" route based on user selection in Flutter
+    pref = inputs.get("route_preference", "recommended")
+    chosen_key = f"{pref}_route"
+    if chosen_key not in route_keys:
+         chosen_key = "recommended_route"
+
     output_data = {
         "status": "success",
         "benchmark": {
@@ -251,5 +257,8 @@ def generate_travel_plan(inputs):
             },
             "stops": stops
         }
+
+    # Override "recommended_route" with the user's specific choice so Flutter reads it automatically
+    output_data["routes"]["recommended_route"] = output_data["routes"][chosen_key]
 
     return output_data

@@ -9,6 +9,7 @@ class ConfirmationPage extends StatelessWidget {
   final DateTime? endDate;
   final double budget;
   final int peopleCount;
+  final String routePreference; // Added routePreference
 
   const ConfirmationPage({
     super.key,
@@ -18,6 +19,7 @@ class ConfirmationPage extends StatelessWidget {
     required this.endDate,
     required this.budget,
     required this.peopleCount,
+    required this.routePreference, // Added to constructor
   });
 
   int _calculateDays() {
@@ -221,6 +223,7 @@ class ConfirmationPage extends StatelessWidget {
                   "budget": budget,
                   "people": peopleCount,
                   "days": _calculateDays(),
+                  "route_preference": routePreference, // Send preference to backend!
                 };
 
                 // Navigate to the beautiful loading screen and pass data

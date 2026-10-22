@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'home/home_content.dart';
 import 'route/route_content.dart';
+import 'profile/profile_page.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -17,7 +18,7 @@ class _MainScreenState extends State<MainScreen> {
     const RouteContent(), // The new Find Route Page
     const Center(child: Text('Emergency SOS', style: TextStyle(fontSize: 24, color: Colors.red ))),
     const Center(child: Text('Translator', style: TextStyle(fontSize: 24, color: Color(0xFF5D4037)))),
-    const Center(child: Text('Profile', style: TextStyle(fontSize: 24, color: Color(0xFF5D4037)))),
+    const ProfilePage(), // Connect to Profile Page with Admin login
   ];
 
   @override

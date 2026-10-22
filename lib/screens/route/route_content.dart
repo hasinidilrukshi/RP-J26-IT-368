@@ -32,6 +32,7 @@ class _RouteContentState extends State<RouteContent> {
   DateTime? _startDate;
   DateTime? _endDate;
   int _peopleCount = 1;
+  String _routePreference = 'recommended'; // Can be 'recommended', 'shortest', 'cheapest'
 
   @override
   void dispose() {
@@ -435,6 +436,14 @@ class _RouteContentState extends State<RouteContent> {
           ),
 
           const SizedBox(height: 35),
+          
+          // --- 6. ROUTE PREFERENCE ---
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 25),
+            child: _buildRoutePreferenceSelector(),
+          ),
+
+          const SizedBox(height: 45),
 
           // --- NEXT BUTTON ---
           Padding(
@@ -451,6 +460,7 @@ class _RouteContentState extends State<RouteContent> {
                       endDate: _endDate,
                       budget: _budget,
                       peopleCount: _peopleCount,
+                      routePreference: _routePreference,
                     ),
                   ),
                 );
@@ -485,6 +495,76 @@ class _RouteContentState extends State<RouteContent> {
 
           const SizedBox(height: 35), // Removed 120 bottom padding since we now use native bottomNavigationBar
         ],
+      ),
+    );
+  }
+
+  Widget _buildRoutePreferenceSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle('6. ROUTE PREFERENCE'),
+        const SizedBox(height: 15),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            _buildPreferenceOption('shortest', Icons.speed, 'Shortest', 'Fastest travel'),
+            _buildPreferenceOption('recommended', Icons.star, 'Recommended', 'Best balance'),
+            _buildPreferenceOption('cheapest', Icons.savings, 'Cheapest', 'Save money'),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPreferenceOption(String value, IconData icon, String title, String subtitle) {
+    bool isSelected = _routePreference == value;
+    
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _routePreference = value;
+        });
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+        width: MediaQuery.of(context).size.width * 0.28,
+        padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 5),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFE65100) : Colors.white,
+          borderRadius: BorderRadius.circular(15),
+          boxShadow: isSelected 
+              ? [BoxShadow(color: const Color(0xFFE65100).withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))]
+              : [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 5, offset: const Offset(0, 2))],
+          border: Border.all(
+            color: isSelected ? const Color(0xFFE65100) : Colors.grey.shade200,
+            width: 1.5,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: isSelected ? Colors.white : const Color(0xFFE65100), size: 28),
+            const SizedBox(height: 8),
+            Text(
+              title, 
+              style: GoogleFonts.exo(
+                color: isSelected ? Colors.white : const Color(0xFF5D4037), 
+                fontWeight: FontWeight.bold, 
+                fontSize: 13
+              )
+            ),
+            const SizedBox(height: 2),
+            Text(
+              subtitle, 
+              style: GoogleFonts.exo(
+                color: isSelected ? Colors.white70 : Colors.grey.shade500, 
+                fontSize: 9
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
       ),
     );
   }
