@@ -1,0 +1,40 @@
+Rows: 1000 | sentence templates: 209
+
+=== SEVERITY (5-fold, unseen templates) ===
+              precision    recall  f1-score   support
+
+         Low      0.872     0.832     0.852       197
+      Medium      0.811     0.755     0.782       204
+        High      0.739     0.683     0.710       331
+    Critical      0.655     0.772     0.709       268
+
+    accuracy                          0.751      1000
+   macro avg      0.769     0.761     0.763      1000
+weighted avg      0.757     0.751     0.752      1000
+
+               Low  Medium  High  Critical
+true Low       164      21    12         0
+true Medium     17     154    15        18
+true High        5       9   226        91
+true Critical    2       6    53       207 
+
+Under-rated: 9.2% | Over-rated: 15.7%
+
+=== EMERGENCY TYPE ===
+              precision    recall  f1-score   support
+
+       Crime      0.898     0.750     0.817       200
+ Lost/Rescue      0.653     0.650     0.652       200
+     Medical      0.724     0.775     0.749       200
+Ocean Safety      0.913     0.945     0.929       200
+    Wildlife      0.770     0.820     0.794       200
+
+    accuracy                          0.788      1000
+   macro avg      0.792     0.788     0.788      1000
+weighted avg      0.792     0.788     0.788      1000
+
+=== AUTHORITIES ===
+micro-F1 0.731 | macro-F1 0.634 | exact match 0.565
+
+Saved -> models/severity_model.joblib
+Metrics: {'severity_macro_f1': 0.763, 'type_macro_f1': 0.788, 'authority_micro_f1': 0.731}

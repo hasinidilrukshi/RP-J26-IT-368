@@ -1,0 +1,32 @@
+name: ceylon_path_emergency
+description: "Ceylon Path - AI tourist emergency severity assessment and response (Sri Lanka)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Backend (FastAPI) calls
+  http: ^1.2.2
+  # GPS location
+  geolocator: ^13.0.2
+  # Phone calls / open Google Maps
+  url_launcher: ^6.3.1
+  # Voice SOS recording
+  record: ^5.2.0
+  path_provider: ^2.1.5
+  # Read the response aloud
+  flutter_tts: ^4.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
