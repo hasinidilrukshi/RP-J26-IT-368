@@ -15,8 +15,8 @@ Foreign tourists in Sri Lanka face health risks from street food because ingredi
 * The dish is looked up in a MongoDB knowledge base of ingredients, allergens and nutrition.
 * A rule-based safety engine matches the dish against the tourist's health profile and returns Safe / Caution / Avoid, a 0–100 score, reasons, benefits and risks.
 
-```text
-Flutter App ──photo──► FastAPI ──► YOLOv8 (best.pt) ──► MongoDB (foods) ──► Safety Engine ──► Verdict```
+
+Flutter App ──photo──► FastAPI ──► YOLOv8 (best.pt) ──► MongoDB (foods) ──► Safety Engine ──► Verdict
 
 
 ## 3. Dataset(s) and Source
