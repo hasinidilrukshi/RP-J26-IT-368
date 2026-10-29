@@ -7,7 +7,7 @@ import '../models/emergency_report.dart';
 import '../services/emergency_api_service.dart';
 import '../widgets/primary_button.dart';
 import '../widgets/section_title.dart';
-import 'home_screen.dart' show SeverityChip;
+import '../widgets/report_tile.dart';
 import 'response_service_screen.dart';
 
 class EmergencyStatusScreen extends StatefulWidget {

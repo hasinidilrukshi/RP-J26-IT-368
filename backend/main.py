@@ -21,11 +21,12 @@ from typing import Optional
 from bson import ObjectId
 from bson.errors import InvalidId
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pymongo import DESCENDING, MongoClient
+from pymongo.errors import ConfigurationError
 
 from severity_model import assess, model_info
 import speech
@@ -35,6 +36,23 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 log = logging.getLogger("ceylonpath")
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+
+
+PUBLIC_DNS = ["8.8.8.8", "1.1.1.1"]  # Google, Cloudflare
+
+
+def _use_public_dns() -> bool:
+    """Some Wi-Fi / campus / mobile networks cannot look up the SRV records
+    that a 'mongodb+srv://' Atlas address needs ("DNS query name does not
+    exist"). Then we ask Google / Cloudflare DNS instead."""
+    try:
+        import dns.resolver
+    except ImportError:
+        return False
+    r = dns.resolver.Resolver(configure=False)
+    r.nameservers = PUBLIC_DNS
+    dns.resolver.default_resolver = r
+    return True
 
 
 def _make_client(uri: str) -> MongoClient:
@@ -47,7 +65,27 @@ def _make_client(uri: str) -> MongoClient:
             kwargs["tlsCAFile"] = certifi.where()
         except ImportError:
             pass
-    return MongoClient(uri, **kwargs)
+    try:
+        return MongoClient(uri, **kwargs)
+    except ConfigurationError as e:
+        # 1st try used this computer's DNS. If the Atlas address could not be
+        # found, try again with public DNS before giving up.
+        if not uri.startswith("mongodb+srv://") or not _use_public_dns():
+            raise
+        print(f"[DB] This network's DNS could not find the Atlas cluster ({e}).")
+        print(f"     Retrying with public DNS {', '.join(PUBLIC_DNS)} ...")
+        try:
+            client_ = MongoClient(uri, **kwargs)
+            print("[DB] Atlas address found using public DNS.")
+            return client_
+        except ConfigurationError as e2:
+            raise SystemExit(
+                "\n[DB] Could not find the MongoDB Atlas cluster, even with public DNS.\n"
+                f"     Error: {e2}\n"
+                "     1. Copy the address again: Atlas -> Connect -> Drivers -> Python,\n"
+                "        and paste it into MONGO_URI in backend/.env\n"
+                "     2. Check that this computer has internet (try a phone hotspot).\n"
+            ) from e2
 
 
 client = _make_client(MONGO_URI)
@@ -83,9 +121,14 @@ STATUS_FLOW = ["submitted", "assessed", "dispatched", "on_the_way", "resolved"]
 # Schemas
 # --------------------------------------------------------------------------- #
 class EmergencyIn(BaseModel):
-    tourist_name: str
-    phone: str
+    # Name / phone are OPTIONAL: a tourist in danger must never be blocked
+    # by a form. The app sends them only if the tourist saved a profile.
+    tourist_name: str = ""
+    phone: str = ""
     nationality: str = ""
+    emergency_contact: str = ""
+    device_id: str = ""               # anonymous id of the phone (history)
+    location_accuracy: Optional[float] = None
     emergency_type: str = "other"
     description: str = ""
     people_affected: int = Field(1, ge=1)
@@ -99,6 +142,21 @@ class EmergencyIn(BaseModel):
     address: str = ""
     input_mode: str = "text"          # text | voice
     audio_id: Optional[str] = None    # from /api/transcribe
+
+
+class DetailsIn(BaseModel):
+    """OPTIONAL follow-up answers sent AFTER the SOS. Every field may be left
+    out; only the fields that are sent are changed."""
+    is_conscious: Optional[bool] = None
+    is_breathing_normally: Optional[bool] = None
+    has_heavy_bleeding: Optional[bool] = None
+    is_in_danger: Optional[bool] = None
+    people_affected: Optional[int] = Field(None, ge=1)
+    extra_message: Optional[str] = None
+    address: Optional[str] = None     # landmark typed after the SOS
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    location_accuracy: Optional[float] = None
 
 
 class DispatchIn(BaseModel):
@@ -134,6 +192,54 @@ def haversine_km(lat1, lng1, lat2, lng2) -> float:
     dp, dl = math.radians(lat2 - lat1), math.radians(lng2 - lng1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
+
+
+# Approximate town-centre coordinates, used only to show "near Ella (3 km)"
+# next to the GPS point. The exact GPS coordinates are always sent too.
+PLACES = [
+    ("Colombo", 6.9271, 79.8612), ("Negombo", 7.2083, 79.8358),
+    ("Gampaha", 7.0917, 79.9999), ("Kelaniya", 6.9553, 79.9220),
+    ("Biyagama", 6.9420, 79.9830), ("Kaduwela", 6.9330, 79.9840),
+    ("Avissawella", 6.9533, 80.2100), ("Kitulgala", 6.9890, 80.4170),
+    ("Ratnapura", 6.6828, 80.3992), ("Kandy", 7.2906, 80.6337),
+    ("Nuwara Eliya", 6.9497, 80.7891), ("Horton Plains", 6.8020, 80.8070),
+    ("Bandarawela", 6.8259, 80.9982), ("Ella", 6.8667, 81.0466),
+    ("Badulla", 6.9934, 81.0550), ("Sigiriya", 7.9570, 80.7603),
+    ("Dambulla", 7.8742, 80.6511), ("Polonnaruwa", 7.9403, 81.0188),
+    ("Anuradhapura", 8.3114, 80.4037), ("Jaffna", 9.6615, 80.0255),
+    ("Trincomalee", 8.5874, 81.2152), ("Arugam Bay", 6.8400, 81.8368),
+    ("Yala", 6.3700, 81.5200), ("Tissamaharama", 6.2786, 81.2876),
+    ("Matara", 5.9549, 80.5550), ("Mirissa", 5.9483, 80.4716),
+    ("Galle", 6.0535, 80.2210), ("Unawatuna", 6.0100, 80.2497),
+    ("Hikkaduwa", 6.1395, 80.1063), ("Bentota", 6.4210, 80.0000),
+]
+
+
+def nearest_place(lat: Optional[float], lng: Optional[float]) -> Optional[dict]:
+    if lat is None or lng is None:
+        return None
+    name, plat, plng = min(PLACES, key=lambda p: haversine_km(lat, lng, p[1], p[2]))
+    return {"name": name, "distance_km": round(haversine_km(lat, lng, plat, plng), 1)}
+
+
+def services_for(lat: Optional[float], lng: Optional[float], rec: list,
+                 limit: int = 12) -> list:
+    """Recommended services first (in the order the AI chose), then the rest.
+    Hospitals are ranked by distance from the tourist."""
+    if lat is None or lng is None:
+        lat, lng = 7.8731, 80.7718  # centre of Sri Lanka -> distances unknown
+    items = [service_view(s, lat, lng) for s in services.find()]
+    hospitals = sorted([i for i in items if i["type"] == "hospital"],
+                       key=lambda s: s["distance_km"])[:2]
+    recommended = [i for t in rec for i in items if i["type"] == t and i["type"] != "hospital"]
+    if "hospital" in rec:
+        recommended += hospitals
+    for i in recommended:
+        i["recommended"] = True
+    # nearest hospitals right after the recommended ones, then the hotlines
+    rest = [h for h in hospitals if h not in recommended]
+    rest += [i for i in items if i not in recommended and i["type"] != "hospital"]
+    return (recommended + rest)[:limit]
 
 
 def service_view(s: dict, lat: float, lng: float) -> dict:
@@ -249,6 +355,7 @@ def create_emergency(body: EmergencyIn):
             data["voice"]["audio_url"] = f"/api/voice/{data['audio_id']}"
     data.update(
         assessment=assessment,
+        nearest_place=nearest_place(data.get("latitude"), data.get("longitude")),
         status="assessed",
         assigned_service=None,
         created_at=now,
@@ -260,10 +367,12 @@ def create_emergency(body: EmergencyIn):
 
 @app.get("/api/emergencies")
 def list_emergencies(phone: Optional[str] = None, status: Optional[str] = None,
-                     limit: int = 100):
+                     device_id: Optional[str] = None, limit: int = 100):
     q = {}
     if phone:
         q["phone"] = phone
+    if device_id:
+        q["device_id"] = device_id
     if status:
         q["status"] = status
     cur = emergencies.find(q).sort("created_at", DESCENDING).limit(limit)
@@ -317,15 +426,130 @@ def nearby_services(lat: float, lng: float, emergency_type: str = "other",
         rec = [s.strip() for s in services_param.split(",") if s.strip()]
     else:
         rec = assess({"emergency_type": emergency_type})["recommended_services"]
-    items = [service_view(s, lat, lng) for s in services.find()]
-    hospitals = sorted([i for i in items if i["type"] == "hospital"],
-                       key=lambda s: s["distance_km"])[:2]
-    recommended = [i for t in rec for i in items if i["type"] == t and i["type"] != "hospital"]
-    if "hospital" in rec:
-        recommended += hospitals
-    rest = [i for i in items if i not in recommended
-            and (i["type"] != "hospital" or i in hospitals)]
-    return (recommended + rest)[:limit]
+    return services_for(lat, lng, rec, limit)
+
+
+# --------------------------------------------------------------------------- #
+# ONE-STEP SOS: text OR voice + GPS  ->  assessment + who to call
+# --------------------------------------------------------------------------- #
+def _opt_float(v: Optional[str]) -> Optional[float]:
+    try:
+        return float(v) if v not in (None, "", "null") else None
+    except ValueError:
+        return None
+
+
+@app.post("/api/sos", status_code=201)
+def sos(
+    message: str = Form(""),
+    audio: Optional[UploadFile] = File(None),
+    latitude: Optional[str] = Form(None),
+    longitude: Optional[str] = Form(None),
+    location_accuracy: Optional[str] = Form(None),
+    address: str = Form(""),
+    tourist_name: str = Form(""),
+    phone: str = Form(""),
+    nationality: str = Form(""),
+    emergency_contact: str = Form(""),
+    device_id: str = Form(""),
+):
+    """The tourist only types a message OR records a voice note.
+    Everything else (GPS, type, severity, responders) is worked out here."""
+    text = (message or "").strip()
+    voice = None
+    audio_id = None
+
+    if audio is not None and audio.filename:
+        ext = os.path.splitext(audio.filename)[1].lower() or ".m4a"
+        if ext not in (".m4a", ".aac", ".mp3", ".wav", ".ogg", ".webm", ".3gp", ".mp4"):
+            raise HTTPException(400, f"Unsupported audio type {ext}")
+        audio_id = uuid.uuid4().hex
+        path = os.path.join(VOICE_DIR, audio_id + ext)
+        with open(path, "wb") as f:
+            shutil.copyfileobj(audio.file, f)
+        try:
+            result = speech.transcribe(path)
+        except speech.SpeechUnavailable as e:
+            if not text:
+                raise HTTPException(503, str(e))
+            result = None
+        except Exception as e:  # noqa: BLE001
+            if not text:
+                raise HTTPException(422, f"Could not read the audio: {e}")
+            result = None
+        if result and result.get("text"):
+            voice_notes.insert_one({"_id": audio_id, "path": path,
+                                    "created_at": datetime.utcnow(), **result})
+            voice = {k: result.get(k) for k in (
+                "original_text", "text", "language", "language_name",
+                "language_probability", "duration")}
+            voice["audio_url"] = f"/api/voice/{audio_id}"
+            # typed words (if any) + what was said
+            text = f"{text}. {result['text']}".strip(". ") if text else result["text"]
+        elif not text:
+            raise HTTPException(422, "No speech detected. Please speak closer to the phone or type.")
+
+    if len(text) < 2:
+        raise HTTPException(422, "Please type or say what happened.")
+
+    lat, lng = _opt_float(latitude), _opt_float(longitude)
+    data = EmergencyIn(
+        tourist_name=tourist_name, phone=phone, nationality=nationality,
+        emergency_contact=emergency_contact, device_id=device_id,
+        description=text, latitude=lat, longitude=lng,
+        location_accuracy=_opt_float(location_accuracy), address=address,
+        input_mode="voice" if voice else "text", audio_id=audio_id if voice else None,
+    ).model_dump()
+
+    assessment = assess(data)
+    data["emergency_type"] = assessment["predicted_type"]  # AI decides the type
+    now = datetime.utcnow()
+    data.update(
+        assessment=assessment,
+        nearest_place=nearest_place(lat, lng),
+        status="assessed",
+        assigned_service=None,
+        created_at=now,
+        updated_at=now,
+    )
+    if voice:
+        data["voice"] = voice
+    res = emergencies.insert_one(data)
+    report = serialize(emergencies.find_one({"_id": res.inserted_id}))
+    return {"report": report,
+            "services": services_for(lat, lng, assessment["recommended_services"])}
+
+
+@app.patch("/api/emergencies/{emergency_id}/details")
+def add_details(emergency_id: str, body: DetailsIn):
+    """Optional answers / better GPS sent after the SOS -> re-assess."""
+    e = emergencies.find_one({"_id": oid(emergency_id)})
+    if not e:
+        raise HTTPException(404, "Emergency not found")
+    upd = {k: v for k, v in body.model_dump().items()
+           if v is not None and k != "extra_message"}
+    if body.extra_message and body.extra_message.strip():
+        upd["description"] = f"{e.get('description', '')}. {body.extra_message.strip()}".strip(". ")
+    merged = {**e, **upd}
+    assessment = assess(merged)
+    old = (e.get("assessment") or {}).get("severity", "Low")
+    sev = ["Low", "Medium", "High", "Critical"]
+    # answers may only RAISE the urgency of an open emergency, never lower it
+    if sev.index(assessment["severity"]) < sev.index(old):
+        new = assessment["severity"]
+        if assessment["summary"].startswith(new):
+            assessment["summary"] = old + assessment["summary"][len(new):]
+        assessment["severity"] = old
+        assessment["score"] = max(assessment["score"], (e.get("assessment") or {}).get("score", 0))
+    upd.update(assessment=assessment,
+               emergency_type=assessment["predicted_type"],
+               nearest_place=nearest_place(merged.get("latitude"), merged.get("longitude")),
+               updated_at=datetime.utcnow())
+    emergencies.update_one({"_id": e["_id"]}, {"$set": upd})
+    report = serialize(emergencies.find_one({"_id": e["_id"]}))
+    return {"report": report,
+            "services": services_for(merged.get("latitude"), merged.get("longitude"),
+                                     assessment["recommended_services"])}
 
 
 @app.post("/api/transcribe")

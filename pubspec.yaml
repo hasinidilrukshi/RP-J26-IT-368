@@ -22,6 +22,8 @@ dependencies:
   path_provider: ^2.1.5
   # Read the response aloud
   flutter_tts: ^4.2.0
+  # Save the tourist's optional details once on the phone
+  shared_preferences: ^2.3.2
 
 dev_dependencies:
   flutter_test:

@@ -3,7 +3,7 @@ import '../core/app_colors.dart';
 import '../models/emergency_report.dart';
 import '../services/emergency_api_service.dart';
 import 'emergency_status_screen.dart';
-import 'home_screen.dart' show ReportTile;
+import '../widgets/report_tile.dart';
 
 class EmergencyHistoryScreen extends StatefulWidget {
   const EmergencyHistoryScreen({super.key});
@@ -39,7 +39,7 @@ class _EmergencyHistoryScreenState extends State<EmergencyHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Emergency History')),
+      appBar: AppBar(title: const Text('My Reports')),
       body: Column(
         children: [
           Padding(
@@ -50,7 +50,7 @@ class _EmergencyHistoryScreenState extends State<EmergencyHistoryScreen> {
               textInputAction: TextInputAction.search,
               onSubmitted: (_) => setState(_load),
               decoration: InputDecoration(
-                hintText: 'Search by phone number',
+                hintText: 'Search by phone (empty = this phone)',
                 prefixIcon: const Icon(Icons.search_rounded),
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.arrow_forward_rounded,

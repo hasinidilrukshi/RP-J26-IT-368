@@ -1,20 +1,26 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import '../models/emergency_report.dart';
 
-class VoiceException implements Exception {
+import 'package:flutter/foundation.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+
+import '../models/emergency_report.dart';
+import 'profile_store.dart';
+
+/// Error with a message that can be shown to the tourist as it is.
+class SosException implements Exception {
   final String message;
-  VoiceException(this.message);
+  SosException(this.message);
   @override
   String toString() => message;
 }
 
 /// Talks to the Python (FastAPI) backend, which stores data in MongoDB.
 ///
-/// If the backend cannot be reached, a simple on-device rule-based
-/// assessment is used so the app can still be demoed offline.
+/// If the backend cannot be reached, an on-phone estimate (red-flag words)
+/// and the national hotlines are shown, so the tourist is never left without
+/// a number to call.
 class EmergencyApiService {
   EmergencyApiService._();
   static final EmergencyApiService instance = EmergencyApiService._();
@@ -40,6 +46,7 @@ class EmergencyApiService {
   }
 
   static const Duration _timeout = Duration(seconds: 10);
+  static const Duration _voiceTimeout = Duration(seconds: 90);
   static const Map<String, String> _headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -54,70 +61,139 @@ class EmergencyApiService {
   Uri _uri(String path, [Map<String, String>? query]) =>
       Uri.parse('$baseUrl$path').replace(queryParameters: query);
 
-  // ---------------------------------------------------------------------------
-  // 1. Submit report -> backend runs severity assessment -> returns saved report
-  // ---------------------------------------------------------------------------
-  Future<EmergencyReport> submitReport(EmergencyReport report) async {
+  static String _detail(http.Response res, String fallback) {
     try {
-      final res = await http
-          .post(_uri('/api/emergencies'),
-              headers: _headers, body: jsonEncode(report.toJson()))
-          .timeout(_timeout);
+      final d = jsonDecode(res.body)['detail'];
+      if (d is String && d.isNotEmpty) return d;
+    } catch (_) {}
+    return fallback;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 1. ONE-STEP SOS: message OR voice + GPS  ->  assessment + who to call
+  // ---------------------------------------------------------------------------
+  /// [message] typed text (may be empty when [audioPath] is given).
+  /// [audioPath] recorded voice note (mobile only).
+  /// Throws [SosException] only for problems the tourist can fix
+  /// (e.g. nothing was said). If the server is unreachable it returns an
+  /// offline estimate instead of failing.
+  Future<SosResponse> sendSos({
+    String message = '',
+    String? audioPath,
+    Position? position,
+  }) async {
+    final profile = ProfileStore.instance;
+    final text = message.trim();
+    try {
+      final req = http.MultipartRequest('POST', _uri('/api/sos'))
+        ..fields.addAll({
+          'message': text,
+          if (position != null) 'latitude': position.latitude.toString(),
+          if (position != null) 'longitude': position.longitude.toString(),
+          if (position != null)
+            'location_accuracy': position.accuracy.toStringAsFixed(1),
+          'tourist_name': profile.name,
+          'phone': profile.phone,
+          'nationality': profile.nationality,
+          'emergency_contact': profile.emergencyContact,
+          'device_id': profile.deviceId,
+        });
+      if (audioPath != null && !kIsWeb) {
+        req.files.add(await http.MultipartFile.fromPath('audio', audioPath));
+      }
+      final streamed = await req
+          .send()
+          .timeout(audioPath != null ? _voiceTimeout : _timeout);
+      final res = await http.Response.fromStream(streamed);
+
       if (res.statusCode == 200 || res.statusCode == 201) {
         lastCallOffline = false;
-        return EmergencyReport.fromJson(jsonDecode(res.body));
+        return SosResponse.fromJson(
+            Map<String, dynamic>.from(jsonDecode(res.body) as Map));
       }
-      throw Exception('Server error ${res.statusCode}: ${res.body}');
-    } catch (_) {
-      // Offline fallback
-      lastCallOffline = true;
-      report.id = 'local-${DateTime.now().millisecondsSinceEpoch}';
-      report.assessment = _localAssessment(report);
-      report.status = EmergencyStatus.assessed;
-      _offlineHistory.insert(0, report);
-      return report;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // 1b. Voice note -> Whisper (speech to English text) on the backend
-  // ---------------------------------------------------------------------------
-  /// Throws [VoiceException] with a user-friendly message on failure.
-  Future<TranscriptionResult> transcribe(String audioPath) async {
-    try {
-      final req = http.MultipartRequest('POST', _uri('/api/transcribe'))
-        ..files.add(await http.MultipartFile.fromPath('audio', audioPath));
-      final streamed =
-          await req.send().timeout(const Duration(seconds: 90));
-      final res = await http.Response.fromStream(streamed);
-      if (res.statusCode == 200) {
-        return TranscriptionResult.fromJson(jsonDecode(res.body));
+      if (res.statusCode == 422 || res.statusCode == 400) {
+        // e.g. "No speech detected" -> the tourist can try again
+        throw SosException(
+            _detail(res, 'We could not understand that. Please try again.'));
       }
-      String msg = 'Could not process the voice note.';
-      try {
-        msg = jsonDecode(res.body)['detail']?.toString() ?? msg;
-      } catch (_) {}
-      throw VoiceException(msg);
-    } on VoiceException {
+      if (res.statusCode == 503 && text.isEmpty) {
+        throw SosException(_detail(res,
+            'Voice is not available right now. Please type what happened.'));
+      }
+      throw Exception('Server error ${res.statusCode}');
+    } on SosException {
       rethrow;
-    } on TimeoutException {
-      throw VoiceException('The server took too long. Please type your message.');
     } catch (_) {
-      throw VoiceException(
-          'Voice needs the server connection. Please type your message instead.');
+      // Server not reachable -> estimate on the phone
+      if (text.isEmpty) {
+        // voice could not be sent and there is no text to read
+        lastCallOffline = true;
+        final r = EmergencyReport(
+          id: 'local-${DateTime.now().millisecondsSinceEpoch}',
+          description: '(voice message – no connection)',
+          inputMode: 'voice',
+          emergencyType: 'other',
+          latitude: position?.latitude,
+          longitude: position?.longitude,
+          locationAccuracy: position?.accuracy,
+          status: EmergencyStatus.assessed,
+          assessment: _offlineAssessment(''),
+        );
+        _offlineHistory.insert(0, r);
+        return SosResponse(report: r, services: _defaultServices(r), offline: true);
+      }
+      return _offlineSos(text, position);
     }
   }
 
+  SosResponse _offlineSos(String text, Position? position) {
+    lastCallOffline = true;
+    final a = _offlineAssessment(text);
+    final r = EmergencyReport(
+      id: 'local-${DateTime.now().millisecondsSinceEpoch}',
+      description: text,
+      emergencyType: a.predictedType ?? 'other',
+      latitude: position?.latitude,
+      longitude: position?.longitude,
+      locationAccuracy: position?.accuracy,
+      status: EmergencyStatus.assessed,
+      assessment: a,
+    );
+    _offlineHistory.insert(0, r);
+    return SosResponse(report: r, services: _defaultServices(r), offline: true);
+  }
+
   // ---------------------------------------------------------------------------
-  // 2. Nearby response services for a report
+  // 2. OPTIONAL answers / better GPS after the SOS  ->  re-assessment
+  // ---------------------------------------------------------------------------
+  /// Returns null if the server cannot be reached (the SOS itself is
+  /// already saved, so nothing is lost).
+  Future<SosResponse?> addDetails(
+      EmergencyReport report, Map<String, dynamic> details) async {
+    if (report.isLocal) return null;
+    try {
+      final res = await http
+          .patch(_uri('/api/emergencies/${report.id}/details'),
+              headers: _headers, body: jsonEncode(details))
+          .timeout(_timeout);
+      if (res.statusCode == 200) {
+        return SosResponse.fromJson(
+            Map<String, dynamic>.from(jsonDecode(res.body) as Map));
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 3. Nearby response services for a report
   // ---------------------------------------------------------------------------
   Future<List<ResponseService>> getNearbyServices(EmergencyReport report) async {
     try {
       final res = await http
           .get(
             _uri('/api/services/nearby', {
-              'lat': (report.latitude ?? 7.2906).toString(),
-              'lng': (report.longitude ?? 80.6337).toString(),
+              'lat': (report.latitude ?? 7.8731).toString(),
+              'lng': (report.longitude ?? 80.7718).toString(),
               'emergency_type': report.emergencyType,
               if (report.assessment != null &&
                   report.assessment!.recommendedServices.isNotEmpty)
@@ -139,31 +215,31 @@ class EmergencyApiService {
   }
 
   // ---------------------------------------------------------------------------
-  // 3. Request a responder
+  // 4. Request a responder
   // ---------------------------------------------------------------------------
   Future<EmergencyReport> dispatchService(
       EmergencyReport report, ResponseService service) async {
-    try {
-      final res = await http
-          .post(_uri('/api/emergencies/${report.id}/dispatch'),
-              headers: _headers, body: jsonEncode({'service_id': service.id}))
-          .timeout(_timeout);
-      if (res.statusCode == 200) {
-        return EmergencyReport.fromJson(jsonDecode(res.body));
-      }
-      throw Exception('Server error ${res.statusCode}');
-    } catch (_) {
-      report.assignedService = service;
-      report.status = EmergencyStatus.dispatched;
-      return report;
+    if (!report.isLocal) {
+      try {
+        final res = await http
+            .post(_uri('/api/emergencies/${report.id}/dispatch'),
+                headers: _headers, body: jsonEncode({'service_id': service.id}))
+            .timeout(_timeout);
+        if (res.statusCode == 200) {
+          return EmergencyReport.fromJson(jsonDecode(res.body));
+        }
+      } catch (_) {}
     }
+    report.assignedService = service;
+    report.status = EmergencyStatus.dispatched;
+    return report;
   }
 
   // ---------------------------------------------------------------------------
-  // 4. Live status of a report
+  // 5. Live status of a report
   // ---------------------------------------------------------------------------
   Future<EmergencyReport> getReport(EmergencyReport report) async {
-    if (report.id == null || report.id!.startsWith('local-')) return report;
+    if (report.isLocal) return report;
     try {
       final res = await http
           .get(_uri('/api/emergencies/${report.id}'), headers: _headers)
@@ -176,30 +252,34 @@ class EmergencyApiService {
   }
 
   Future<EmergencyReport> cancelReport(EmergencyReport report) async {
-    try {
-      final res = await http
-          .patch(_uri('/api/emergencies/${report.id}/status'),
-              headers: _headers, body: jsonEncode({'status': 'resolved'}))
-          .timeout(_timeout);
-      if (res.statusCode == 200) {
-        return EmergencyReport.fromJson(jsonDecode(res.body));
-      }
-    } catch (_) {}
+    if (!report.isLocal) {
+      try {
+        final res = await http
+            .patch(_uri('/api/emergencies/${report.id}/status'),
+                headers: _headers, body: jsonEncode({'status': 'resolved'}))
+            .timeout(_timeout);
+        if (res.statusCode == 200) {
+          return EmergencyReport.fromJson(jsonDecode(res.body));
+        }
+      } catch (_) {}
+    }
     report.status = EmergencyStatus.resolved;
     return report;
   }
 
   // ---------------------------------------------------------------------------
-  // 5. History
+  // 6. History (this phone's reports, or search by phone number)
   // ---------------------------------------------------------------------------
   Future<List<EmergencyReport>> getHistory({String? phone}) async {
+    final query = <String, String>{
+      if (phone != null && phone.isNotEmpty)
+        'phone': phone
+      else
+        'device_id': ProfileStore.instance.deviceId,
+    };
     try {
       final res = await http
-          .get(
-            _uri('/api/emergencies',
-                phone != null && phone.isNotEmpty ? {'phone': phone} : null),
-            headers: _headers,
-          )
+          .get(_uri('/api/emergencies', query), headers: _headers)
           .timeout(_timeout);
       if (res.statusCode == 200) {
         final List data = jsonDecode(res.body);
@@ -216,78 +296,102 @@ class EmergencyApiService {
   }
 
   // ---------------------------------------------------------------------------
-  // Offline helpers (used only when the backend / ML model can't be reached)
+  // Offline helpers (used only when the backend cannot be reached).
+  // Same red-flag idea as backend/severity_model.py: the words in the
+  // message can only make the emergency MORE urgent.
   // ---------------------------------------------------------------------------
-  static const Map<String, List<String>> _keywords = {
-    'Critical': ['not breathing', 'unconscious', 'collapsed', 'drowning',
-      'knife', 'gun', 'heart attack', 'chest pain', 'kidnap', 'swept away',
-      'attacked'],
-    'High': ['bleeding', 'broken', 'fracture', 'elephant', 'bitten', 'stuck',
-      'trapped', 'current', 'robbed', 'assault', 'fell', 'dark'],
-    'Medium': ['snake', 'sting', 'stolen', 'pain', 'lost', 'fever', 'scam',
-      'monkey'],
-  };
+  static const String _person =
+      r'(him|her|my (son|daughter|child|kid|baby|boy|girl|friend|brother|sister|wife|husband|mom|mother|dad|father)|(my )?\d+ ?(yr|year)s? old)';
+
+  // (pattern, severity, score, type id or '', needs ambulance)
+  static final List<(RegExp, String, int, String, bool)> _redFlags = [
+    (RegExp(r"not breath|(can'?t|cannot|unable to) breath|stopped breathing"), 'Critical', 85, 'medical', true),
+    (RegExp(r"unconscious|passed out|(won'?t|will not|doesn'?t|not) (wake|respond)|not (moving|talking|responding)|collapsed"), 'Critical', 80, 'medical', true),
+    (RegExp(r"seizure|heart attack|stroke|(can'?t|cannot) feel my (arm|leg|face)"), 'Critical', 80, 'medical', true),
+    (RegExp(r"(snake|something|it) bit|bitten by|getting numb"), 'Critical', 75, 'wildlife', true),
+    (RegExp(r"drown|swept (away|out)|(can'?t|cannot) see (his|her) head|went under|rip current"), 'Critical', 85, 'ocean', true),
+    (RegExp(r"\bgun\b|\bknife\b|knifepoint|break(ing)? (in|our door|the door)"), 'Critical', 80, 'crime', false),
+    (RegExp(r"drugged|put something in my drink|spiked"), 'Critical', 75, 'crime', true),
+    (RegExp('(missing|lost|(can\'?t|cannot) (find|see)) $_person|$_person (is )?missing'), 'Critical', 80, 'lost', false),
+    (RegExp(r"tsunami|flood|water (is )?(up to|entering|inside|coming in)|landslide"), 'Critical', 75, 'lost', false),
+    (RegExp(r"bleeding|dislocat|broken (leg|arm|bone)|fracture|(can'?t|cannot) walk|fell"), 'High', 60, 'medical', true),
+    (RegExp(r"elephant|leopard|bear|crocodile|charging"), 'High', 60, 'wildlife', false),
+    (RegExp(r"robbed|attacked|assault|following me|harass"), 'High', 60, 'crime', false),
+    (RegExp(r"\blost\b|stuck|trapped|getting dark|can'?t find (the|my) way"), 'Medium', 40, 'lost', false),
+    (RegExp(r"\bsea\b|beach|wave|current|boat|swim"), 'Medium', 40, 'ocean', false),
+    (RegExp(r"stolen|stole|scam|cheated|passport"), 'Medium', 40, 'crime', false),
+    (RegExp(r"snake|monkey|dog bit|sting|jellyfish"), 'Medium', 40, 'wildlife', false),
+    (RegExp(r"fever|vomit|pain|sick|dizzy|injur|hurt"), 'Medium', 40, 'medical', false),
+  ];
 
   static const Map<String, List<String>> _typeServices = {
     'medical': ['ambulance', 'hospital'],
-    'wildlife': ['wildlife'],
+    'wildlife': ['wildlife', 'ambulance'],
     'crime': ['police', 'tourist_police'],
-    'lost': ['police'],
-    'ocean': ['lifeguard', 'coast_guard'],
-    'other': ['tourist_police'],
+    'lost': ['police', 'disaster'],
+    'ocean': ['lifeguard', 'coast_guard', 'ambulance'],
+    'other': ['police', 'tourist_police'],
   };
 
-  AssessmentResult _localAssessment(EmergencyReport r) {
+  static const Map<String, List<String>> _typeTips = {
+    'medical': ['Do not give food or drink to a seriously injured person.'],
+    'wildlife': ['Keep a safe distance from the animal and do not provoke it.'],
+    'crime': ['Go to a busy, well-lit place and keep your passport copy safe.'],
+    'lost': ['Stay where you are, keep warm and save phone battery.'],
+    'ocean': [
+      'Do not enter the water to rescue someone unless trained; throw something that floats.'
+    ],
+  };
+
+  @visibleForTesting
+  AssessmentResult offlineAssessmentForTest(String text) =>
+      _offlineAssessment(text);
+
+  AssessmentResult _offlineAssessment(String text) {
     const levels = ['Low', 'Medium', 'High', 'Critical'];
-    final text = r.description.toLowerCase();
-    var severity = 'Low';
-    for (final lvl in ['Critical', 'High', 'Medium']) {
-      if (_keywords[lvl]!.any(text.contains)) {
-        severity = lvl;
-        break;
-      }
-    }
-    var score = const {'Low': 15, 'Medium': 40, 'High': 65, 'Critical': 90}[severity]!;
+    final t = text.toLowerCase();
+    var severity = text.isEmpty ? 'High' : 'Low'; // unknown voice -> treat as urgent
+    var score = text.isEmpty ? 60 : 15;
+    var type = 'other';
+    var ambulance = false;
     final reasons = <String>[];
 
-    void raise(String lvl, int min, String why) {
-      if (levels.indexOf(lvl) > levels.indexOf(severity)) {
-        severity = lvl;
-        reasons.add(why);
+    for (final f in _redFlags) {
+      if (f.$1.hasMatch(t)) {
+        if (levels.indexOf(f.$2) > levels.indexOf(severity)) {
+          severity = f.$2;
+          score = f.$3;
+        }
+        if (type == 'other') type = f.$4;
+        ambulance = ambulance || f.$5;
+        if (f.$2 == 'Critical') reasons.add('urgent words in the message');
       }
-      if (score < min) score = min;
     }
 
-    if (!r.isBreathingNormally) raise('Critical', 85, 'not breathing normally');
-    if (!r.isConscious) raise('Critical', 80, 'unconscious');
-    if (r.hasHeavyBleeding) raise('High', 65, 'heavy bleeding');
-    if (r.isInDanger) raise('High', 60, 'still in danger');
-    if (r.painLevel >= 8) raise('High', 55, 'severe pain');
-    if (r.peopleAffected >= 3) raise('High', 55, 'several people affected');
-
     final services = <String>[
-      if (!r.isBreathingNormally || !r.isConscious || r.hasHeavyBleeding)
-        'ambulance',
-      ...?_typeServices[r.emergencyType],
+      if (ambulance && type != 'ocean') 'ambulance',
+      ...?_typeServices[type],
+      if (ambulance) 'hospital',
     ].toSet().toList();
-
-    final recs = <String>[
-      if (!r.isBreathingNormally) 'Keep the airway open and start CPR if you are trained.',
-      if (r.hasHeavyBleeding) 'Press firmly on the wound with a clean cloth.',
-      if (!r.isConscious) 'Place the person on their side (recovery position).',
-      if (r.isInDanger) 'Move to a safe place if you can do so safely.',
-      'Keep your phone on and the line free so responders can call you.',
-    ];
 
     return AssessmentResult(
       severity: severity,
       score: score,
-      summary: '$severity severity ${r.type.label.toLowerCase()} emergency '
-          '(offline estimate – AI model not reachable).',
-      recommendations: recs,
+      summary: text.isEmpty
+          ? 'Your voice message could not be sent (no connection). Call a hotline below.'
+          : '$severity severity '
+              '${type == 'other' ? '' : '${EmergencyType.byId(type).label.toLowerCase()} '}'
+              'emergency (offline estimate – server not reachable).',
+      recommendations: [
+        ...?_typeTips[type],
+        'Call the first number below now.',
+        'Keep your phone on and the line free so responders can call you.',
+      ],
       recommendedServices: services,
+      predictedType: type,
+      predictedTypeLabel: EmergencyType.byId(type).label,
       method: 'offline',
-      adjustments: reasons,
+      adjustments: reasons.toSet().toList(),
     );
   }
 
@@ -317,6 +421,17 @@ class EmergencyApiService {
       return i < 0 ? 99 : i;
     }
 
-    return List.of(all)..sort((a, b) => rank(a).compareTo(rank(b)));
+    return (List.of(all)..sort((a, b) => rank(a).compareTo(rank(b))))
+        .map((s) => ResponseService(
+              id: s.id,
+              name: s.name,
+              type: s.type,
+              phone: s.phone,
+              distanceKm: s.distanceKm,
+              etaMinutes: s.etaMinutes,
+              address: s.address,
+              recommended: rec.contains(s.type),
+            ))
+        .toList();
   }
 }

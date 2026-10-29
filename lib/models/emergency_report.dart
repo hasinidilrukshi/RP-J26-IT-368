@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Types of emergencies a tourist can report (fall detection is NOT part of this).
+/// Types of emergencies (the AI detects the type from the message).
 class EmergencyType {
   final String id;
   final String label;
@@ -138,6 +138,7 @@ class ResponseService {
   final double distanceKm;
   final int etaMinutes;
   final String address;
+  final bool recommended; // chosen by the AI for this emergency
 
   const ResponseService({
     required this.id,
@@ -147,6 +148,7 @@ class ResponseService {
     required this.distanceKm,
     required this.etaMinutes,
     required this.address,
+    this.recommended = false,
   });
 
   factory ResponseService.fromJson(Map<String, dynamic> json) =>
@@ -158,6 +160,7 @@ class ResponseService {
         distanceKm: ((json['distance_km'] ?? 0) as num).toDouble(),
         etaMinutes: ((json['eta_minutes'] ?? 0) as num).toInt(),
         address: json['address'] ?? '',
+        recommended: json['recommended'] == true,
       );
 
   IconData get icon {
@@ -241,6 +244,8 @@ class EmergencyReport {
   String touristName;
   String phone;
   String nationality;
+  String emergencyContact;
+  String deviceId;
 
   // Emergency details
   String emergencyType;
@@ -261,7 +266,10 @@ class EmergencyReport {
   // Location
   double? latitude;
   double? longitude;
+  double? locationAccuracy; // metres
   String address;
+  String? nearestPlace; // e.g. 'Ella'
+  double? nearestPlaceKm;
 
   // Server-side fields
   AssessmentResult? assessment;
@@ -274,6 +282,8 @@ class EmergencyReport {
     this.touristName = '',
     this.phone = '',
     this.nationality = '',
+    this.emergencyContact = '',
+    this.deviceId = '',
     this.emergencyType = 'medical',
     this.description = '',
     this.peopleAffected = 1,
@@ -288,7 +298,10 @@ class EmergencyReport {
     this.originalVoiceText,
     this.latitude,
     this.longitude,
+    this.locationAccuracy,
     this.address = '',
+    this.nearestPlace,
+    this.nearestPlaceKm,
     this.assessment,
     this.status = EmergencyStatus.submitted,
     this.assignedService,
@@ -299,10 +312,23 @@ class EmergencyReport {
 
   bool get hasLocation => latitude != null && longitude != null;
 
+  bool get isLocal => id == null || id!.startsWith('local-');
+
+  /// e.g. "near Ella (0.5 km)"
+  String? get placeLabel => nearestPlace == null
+      ? null
+      : 'near $nearestPlace (${(nearestPlaceKm ?? 0).toStringAsFixed(1)} km)';
+
+  String? get mapsUrl => hasLocation
+      ? 'https://www.google.com/maps/search/?api=1&query=$latitude,$longitude'
+      : null;
+
   Map<String, dynamic> toJson() => {
         'tourist_name': touristName,
         'phone': phone,
         'nationality': nationality,
+        'emergency_contact': emergencyContact,
+        'device_id': deviceId,
         'emergency_type': emergencyType,
         'description': description,
         'people_affected': peopleAffected,
@@ -315,6 +341,7 @@ class EmergencyReport {
         'audio_id': audioId,
         'latitude': latitude,
         'longitude': longitude,
+        'location_accuracy': locationAccuracy,
         'address': address,
       };
 
@@ -324,6 +351,8 @@ class EmergencyReport {
         touristName: json['tourist_name'] ?? '',
         phone: json['phone'] ?? '',
         nationality: json['nationality'] ?? '',
+        emergencyContact: json['emergency_contact'] ?? '',
+        deviceId: json['device_id'] ?? '',
         emergencyType: json['emergency_type'] ?? 'other',
         description: json['description'] ?? '',
         peopleAffected: ((json['people_affected'] ?? 1) as num).toInt(),
@@ -340,7 +369,14 @@ class EmergencyReport {
             json['voice'] is Map ? json['voice']['original_text'] : null,
         latitude: (json['latitude'] as num?)?.toDouble(),
         longitude: (json['longitude'] as num?)?.toDouble(),
+        locationAccuracy: (json['location_accuracy'] as num?)?.toDouble(),
         address: json['address'] ?? '',
+        nearestPlace: json['nearest_place'] is Map
+            ? json['nearest_place']['name']?.toString()
+            : null,
+        nearestPlaceKm: json['nearest_place'] is Map
+            ? (json['nearest_place']['distance_km'] as num?)?.toDouble()
+            : null,
         assessment: json['assessment'] != null
             ? AssessmentResult.fromJson(
                 Map<String, dynamic>.from(json['assessment']))
@@ -353,5 +389,26 @@ class EmergencyReport {
         createdAt: json['created_at'] != null
             ? DateTime.tryParse(json['created_at'].toString())?.toLocal()
             : null,
+      );
+}
+
+/// Answer from POST /api/sos and PATCH /api/emergencies/{id}/details.
+class SosResponse {
+  final EmergencyReport report;
+  final List<ResponseService> services;
+  final bool offline; // true = server not reachable, on-phone estimate
+
+  const SosResponse({
+    required this.report,
+    required this.services,
+    this.offline = false,
+  });
+
+  factory SosResponse.fromJson(Map<String, dynamic> json) => SosResponse(
+        report: EmergencyReport.fromJson(
+            Map<String, dynamic>.from(json['report'] as Map)),
+        services: ((json['services'] as List?) ?? [])
+            .map((e) => ResponseService.fromJson(Map<String, dynamic>.from(e as Map)))
+            .toList(),
       );
 }

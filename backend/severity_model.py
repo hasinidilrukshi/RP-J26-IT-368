@@ -7,6 +7,7 @@ or fails, a keyword/rule fallback is used so the app keeps working.
 """
 import logging
 import os
+import re
 
 log = logging.getLogger("severity_model")
 
@@ -149,6 +150,28 @@ def _rules(text: str, type_id: str):
 
 
 # --------------------------------------------------------------------------- #
+# Red-flag phrases: always checked, even when the ML model is used.
+# (regex, minimum severity, minimum score, reason, add ambulance?, sure type)
+# "sure type" corrects the ML emergency type when the words leave no doubt
+# (e.g. drowning is always Ocean Safety -> lifeguards / coast guard first).
+# --------------------------------------------------------------------------- #
+_PERSON = r"(him|her|my (son|daughter|child|kid|baby|boy|girl|friend|brother|sister|wife|husband|mom|mother|dad|father)|(my )?\d+ ?(yr|year)s? old)"
+TEXT_RED_FLAGS = [
+    (r"not breath|(can'?t|cannot|unable to) breath|stopped breathing", "Critical", 85, "message says not breathing", True, None),
+    (r"unconscious|passed out|(won'?t|will not|doesn'?t|not) (wake|respond)|not (moving|talking|responding)|collapsed|fainted and", "Critical", 80, "message says unconscious / unresponsive", True, None),
+    (r"seizure|heart attack|stroke|(can'?t|cannot) feel my (arm|leg|face)|face (feels|looks) (weird|droop)", "Critical", 80, "possible heart attack / stroke / seizure", True, "Medical"),
+    (r"(snake|something|it) bit|bitten by|2 small holes|two small holes|getting numb", "Critical", 75, "possible venomous bite", True, None),
+    (r"drown|swept (away|out)|(can'?t|cannot) see (his|her) head|went under|pulled out (to|by the) (sea|current)|rip current", "Critical", 85, "possible drowning", True, "Ocean Safety"),
+    (r"\bgun\b|\bknife\b|knifepoint|break(ing)? (in|our door|the door)", "Critical", 80, "weapon / break-in reported", False, "Crime"),
+    (r"drugged|put something in my drink|spiked", "Critical", 75, "possible drink spiking", True, "Crime"),
+    (r"(missing|lost|(can'?t|cannot) (find|see)) " + _PERSON + r"|" + _PERSON + r" (is )?missing", "Critical", 80, "missing person / child", False, None),
+    (r"tsunami|flood|water (is )?(up to|entering|inside|coming in)|landslide", "Critical", 75, "flood / landslide / tsunami", False, "Lost/Rescue"),
+    (r"bleeding (a lot|heavily|badly)|won'?t stop bleeding|dislocat|broken (leg|arm|bone)|fracture|(can'?t|cannot) walk", "High", 60, "serious injury described", True, None),
+    (r"chest (pain|is tight|tight)|(high )?fever.{0,20}rash|faint", "High", 55, "warning medical symptom", True, None),
+]
+
+
+# --------------------------------------------------------------------------- #
 # Public function used by main.py
 # --------------------------------------------------------------------------- #
 def assess(r: dict) -> dict:
@@ -171,6 +194,30 @@ def assess(r: dict) -> dict:
             severity = level
             adjustments.append(why)
         score = max(score, min_score)
+
+    # ---- red-flag phrases in the MESSAGE itself (also only RAISE severity) ----
+    # The ML model can miss these when a tourist words things in a new way,
+    # and voice reports have no form answers, so the text is checked too.
+    needs_ambulance = False
+    sure_type = None
+    low = text.lower()
+    for pattern, level, min_score, why, amb, ftype in TEXT_RED_FLAGS:
+        if re.search(pattern, low):
+            raise_to(level, min_score, why)
+            needs_ambulance = needs_ambulance or amb
+            sure_type = sure_type or ftype
+    if sure_type and sure_type != res["type"]:
+        res = {**res, "type": sure_type, "type_confidence": None}
+        first = TYPE_AUTHORITIES.get(sure_type, [])
+        authorities = first + [a for a in authorities if a not in first]
+        adjustments.append(f"type set to {sure_type} from the message")
+    if needs_ambulance:
+        if "1990 Suwa Seriya Ambulance" not in authorities:
+            # rescue services of the emergency type first, then the ambulance
+            pos = len(TYPE_AUTHORITIES.get(sure_type, [])) if sure_type in ("Ocean Safety", "Crime") else 0
+            authorities.insert(pos, "1990 Suwa Seriya Ambulance")
+        if "Nearest Hospital" not in authorities:
+            authorities.append("Nearest Hospital")
 
     if not r.get("is_breathing_normally", True):
         raise_to("Critical", 85, "not breathing normally")

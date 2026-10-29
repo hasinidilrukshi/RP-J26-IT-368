@@ -8,7 +8,7 @@ ceylon_path_emergency/
 ├── lib/                 Flutter app (screens, widgets, services, models)
 ├── android/             Android project (permissions already added)
 ├── web/                 Run in Chrome
-├── backend/             FastAPI + MongoDB + ML (unchanged)
+├── backend/             FastAPI + MongoDB + ML
 ├── pubspec.yaml         Flutter packages
 ├── run_backend.bat      double-click: start the backend
 ├── run_app_chrome.bat   double-click: run the app in Chrome
@@ -89,13 +89,13 @@ If Windows Firewall asks, allow Python on private networks.
 
 ### What works where
 
-| Feature                        | Android | Chrome |
-|--------------------------------|---------|--------|
-| Typed message → NLP assessment |   ✅    |   ✅  |
-| Voice SOS (Whisper)            |   ✅    |   ❌ (shows a message)|
-| GPS location                   |   ✅    |   ✅  |
-| Call buttons                   |   ✅    |   ❌ |
-| Listen to instructions (TTS)   |   ✅    |   ✅ |
+| Feature | Android | Chrome |
+|---|---|---|
+| Typed message → NLP assessment | ✅ | ✅ |
+| Voice SOS (Whisper) | ✅ | ❌ (shows a message) |
+| GPS location | ✅ | ✅ |
+| Call buttons | ✅ | ❌ |
+| Listen to instructions (TTS) | ✅ | ✅ |
 
 If the backend can't be reached, the app still works with an **offline estimate**.
 
@@ -107,18 +107,47 @@ APK: `build\app\outputs\flutter-apk\app-release.apk`
 
 ---
 
-## 3. App flow
+## 3. App flow (no forms in an emergency)
 
-Home (SOS / Voice SOS) → Report form (voice or text + condition questions) → Location →
-AI Assessment (severity, score, detected type, confidence, authorities, first-aid steps,
-listen aloud) → Response services (call / request) → Live status → History
+```
+Open app ──► GPS starts automatically (chip shows "Location ready ±8 m")
+   │
+   ├─ 🎤 tap SPEAK, say what happened (any language), tap again → sent
+   ├─ 👆 tap one quick button ("Someone drowning", "Bad injury" …) → sent
+   └─ ⌨️ type a few words → Send
+                │
+                ▼   POST /api/sos  (text or voice + GPS + saved profile)
+        Whisper → NLP model → red-flag safety rules → nearest services
+                │
+                ▼
+   Result screen: severity · detected type · BIG "CALL 1990" button ·
+   who should respond (nearest hospital, police, lifeguards …) ·
+   GPS + "near Ella (0.5 km)" · Map · Share location by SMS ·
+   what to do now (read aloud) · OPTIONAL quick yes/no questions
+```
+
+- Name / phone are **optional** and saved **once** in *My details* – never asked during an emergency.
+- If a better GPS fix arrives after the SOS, the app sends it automatically.
+- Optional answers ("Breathing normally? No") re-assess the emergency; they can only **raise** severity.
+- No server? The phone estimates severity from red-flag words and still shows the hotlines to call.
+
+### API used by the app
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/sos` | multipart: `message` and/or `audio` + `latitude`, `longitude`, `location_accuracy`, optional profile → `{report, services}` |
+| PATCH | `/api/emergencies/{id}/details` | optional answers, landmark (`address`), better GPS → re-assessed `{report, services}` |
+| GET | `/api/emergencies?device_id=…` | "My reports" on this phone |
+| GET | `/api/emergencies/{id}` | live status (admin dashboard updates) |
+| POST | `/api/emergencies/{id}/dispatch` | request a responder |
+| PATCH | `/api/emergencies/{id}/status` | e.g. `resolved` ("I am safe now") |
 
 ## 4. ML pipeline
 
 ```
 🎤 voice (any language) → Whisper (translate → English) ─┐
 ⌨️ typed message ─────────────────────────────────────────┴→ NLP model (TF-IDF + Logistic Regression)
-     → severity · emergency type · authorities → safety rules from form answers (can only raise) → response
+     → severity · emergency type · authorities → red-flag phrases in the message + optional answers (can only raise) → response
 ```
 
 | Model | Predicts | Score (unseen sentence templates) |
